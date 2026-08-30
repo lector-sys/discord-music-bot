@@ -1,0 +1,21 @@
+{
+  "name": "discord-music-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file=.env index.js",
+    "test": "node test.js",
+    "verify": "node --env-file=.env verify.mjs"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.22.1",
+    "libsodium-wrappers": "^0.7.15",
+    "opusscript": "^0.0.8",
+    "youtube-dl-exec": "^3.1.13"
+  }
+}
