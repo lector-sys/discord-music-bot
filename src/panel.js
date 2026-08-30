@@ -4,92 +4,131 @@ import {
   ButtonStyle,
   EmbedBuilder,
   MessageFlags,
+  PermissionFlagsBits,
 } from 'discord.js';
-import { fmt, progressBar } from './player.js';
+import { bestThumbnail, fmt, loopEmoji, progressBar } from './player.js';
 import { players } from './queue.js';
+
+// Swap ACCENT to YT_DARK if the red reads too aggressively in your server's theme.
+const YT_RED = 0xff0000;
+const YT_DARK = 0x212121;
+const ACCENT = YT_RED;
 
 export const VOLUME_STEP = 10;
 
-const LOOP = {
-  off: { emoji: '➡️', text: 'off' },
-  track: { emoji: '🔂', text: 'this track' },
-  queue: { emoji: '🔁', text: 'whole queue' },
-};
-
-/** Panel edits die once the message is gone or the interaction token ages out. */
+/** Panel edits die once the message is deleted or the token ages out. */
 const GONE = new Set([
-  10008, // Unknown Message
+  10008, // Unknown Message — someone deleted the panel by hand
   10062, // Unknown Interaction
   50027, // Invalid Webhook Token — the 15-minute expiry
 ]);
 const isGone = (err) => GONE.has(err?.code);
 
-const button = (id, label, emoji, style = ButtonStyle.Secondary) =>
-  new ButtonBuilder().setCustomId(id).setLabel(label).setEmoji(emoji).setStyle(style);
+const icon = (id, emoji, style = ButtonStyle.Secondary) =>
+  new ButtonBuilder().setCustomId(id).setEmoji(emoji).setStyle(style);
 
-/** Everything a /symus message needs: current state as an embed plus two button rows. */
-export function buildPanel(player, { disabled = false } = {}) {
+/**
+ * One vertical column, not a field grid: author, hyperlinked title, artist,
+ * artwork, playhead, then a footer strip. Embed fields would render as boxes
+ * and read like a dashboard rather than a player.
+ */
+export function buildPanel(player) {
   const track = player.current;
   const elapsed = (player.player.state.resource?.playbackDuration ?? 0) / 1000;
-  const loop = LOOP[player.loop] ?? LOOP.off;
-  const level = player.muted ? `🔇 muted (${player.volume}%)` : `🔊 ${player.volume}%`;
+  const total = track?.duration ?? 0;
+  const position = player.history.length + 1;
+  const ofTotal = position + player.queue.length;
+  const volume = player.muted ? '🔇 muted' : `🔊 ${player.volume}%`;
+  const loopText = { off: 'Loop off', track: 'Repeat one', queue: 'Repeat queue' };
 
   const embed = new EmbedBuilder()
-    .setColor(player.paused ? 0x9b9b9b : 0x5865f2)
+    .setColor(ACCENT)
+    .setAuthor({ name: player.paused ? '🎵 Paused' : '🎵 Now playing' })
     .setTitle(track?.title ?? 'Nothing playing')
     .setURL(track?.url ?? null)
     .setDescription(
-      `\`${progressBar(elapsed, track?.duration ?? 0)}\`\n` +
-        `\`${fmt(elapsed)} / ${fmt(track?.duration ?? 0)}\``,
+      [
+        track?.channel ?? 'Unknown artist',
+        '',
+        `\`${progressBar(elapsed, total)}\``,
+        `\`${fmt(elapsed)} / ${total > 0 ? fmt(total) : 'LIVE'}\``,
+      ].join('\n'),
     )
-    .addFields(
-      { name: 'Channel', value: track?.channel ?? '—', inline: true },
-      { name: 'Up next', value: `${player.queue.length} track(s)`, inline: true },
-      { name: 'Volume', value: level, inline: true },
-      { name: 'Loop', value: `${loop.emoji} ${loop.text}`, inline: true },
-      { name: 'State', value: player.paused ? '⏸️ paused' : '▶️ playing', inline: true },
-    );
+    .setFooter({
+      text: [
+        `Track ${position} of ${ofTotal}`,
+        volume,
+        loopText[player.loop] ?? loopText.off,
+      ].join(' · '),
+    });
 
-  const rows = [
-    new ActionRowBuilder().addComponents(
-      button('symus:prev', 'Previous', '⏮️'),
-      player.paused
-        ? button('symus:playpause', 'Resume', '▶️', ButtonStyle.Success)
-        : button('symus:playpause', 'Pause', '⏸️', ButtonStyle.Primary),
-      button('symus:next', 'Next', '⏭️'),
-      button('symus:loop', 'Loop', loop.emoji),
-      button('symus:stop', 'Stop', '⏹️', ButtonStyle.Danger),
-    ),
-    new ActionRowBuilder().addComponents(
-      button('symus:vol:down', 'Vol −', '🔉'),
-      button('symus:vol:up', 'Vol +', '🔊'),
-      player.muted
-        ? button('symus:mute', 'Unmute', '🔈')
-        : button('symus:mute', 'Mute', '🔇', ButtonStyle.Danger),
-    ),
-  ];
-  if (disabled) for (const row of rows) for (const b of row.components) b.setDisabled(true);
+  const art = bestThumbnail(track);
+  if (art) embed.setImage(art);
 
-  return { embeds: [embed], components: rows };
+  // Ordered like a transport bar, not grouped by function. Everything neutral
+  // except Stop, so the strip reads as dark controls rather than a traffic light.
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        icon('symus:prev', '⏮️'),
+        icon('symus:playpause', player.paused ? '▶️' : '⏸️'),
+        icon('symus:next', '⏭️'),
+        icon('symus:loop', loopEmoji(player.loop)),
+        icon('symus:stop', '⏹️', ButtonStyle.Danger),
+      ),
+      new ActionRowBuilder().addComponents(
+        icon('symus:vol:down', '🔉'),
+        icon('symus:mute', player.muted ? '🔈' : '🔇'),
+        icon('symus:vol:up', '🔊'),
+      ),
+    ],
+  };
 }
+
+const canPost = (channel, client) => {
+  const perms = channel?.permissionsFor?.(client.user);
+  return Boolean(
+    perms?.has([
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.EmbedLinks,
+    ]),
+  );
+};
 
 /**
- * Grey out a panel we are replacing, so two panels can never fight over state.
- * A panel older than the token expiry can no longer be edited — nothing to do
- * about that but forget it, since we are about to post a fresh one anyway.
+ * Bring the guild's single panel up to date, creating it the first time playback
+ * starts. Serialized per guild: a progress tick, a button press and a track change
+ * can all land at once, and two concurrent creates would post two panels.
  */
-export async function retirePanel(player) {
-  const stale = player.panel;
-  player.panel = null;
-  if (!stale) return;
-  try {
-    await stale.edit(buildPanel(player, { disabled: true }));
-  } catch (err) {
-    if (!isGone(err)) throw err;
-  }
+export function syncPanel(player) {
+  player.panelLock = player.panelLock
+    .then(() => render(player))
+    .catch((err) => console.error('[panel]', err?.message ?? err));
+  return player.panelLock;
 }
 
-/** Handles every symus:* button. Re-renders the panel so it always shows real state. */
+async function render(player) {
+  if (player.dead || !player.current) return;
+  const payload = buildPanel(player);
+
+  if (player.panel) {
+    try {
+      await player.panel.edit(payload);
+      return;
+    } catch (err) {
+      if (!isGone(err)) throw err;
+      player.panel = null; // deleted out from under us — fall through and repost
+    }
+  }
+
+  const channel = player.text;
+  if (!canPost(channel, player.guild.client)) return;
+  player.panel = await channel.send(payload);
+}
+
+/** Handles every symus:* button, then re-renders so the panel shows real state. */
 export async function handleButton(interaction) {
   const player = players.get(interaction.guildId);
   if (!player?.current) {
@@ -98,7 +137,7 @@ export async function handleButton(interaction) {
       .catch(() => {});
   }
 
-  // Every action below is the same call the equivalent slash command makes.
+  // Each case is the same call the equivalent slash command makes.
   switch (interaction.customId) {
     case 'symus:prev':
       player.previous();
@@ -113,9 +152,10 @@ export async function handleButton(interaction) {
       player.cycleLoop();
       break;
     case 'symus:stop':
+      // destroy() deletes the panel, so answer the interaction rather than edit it.
       player.destroy();
       return interaction
-        .update({ content: '⏹️ Stopped, queue cleared, left the channel.', embeds: [], components: [] })
+        .reply({ content: '⏹️ Stopped, queue cleared, left the channel.' })
         .catch(() => {});
     case 'symus:vol:down':
       player.setVolume(player.volume - VOLUME_STEP);
@@ -132,15 +172,10 @@ export async function handleButton(interaction) {
 
   try {
     await interaction.update(buildPanel(player));
-    player.panel = interaction.message;
+    player.panel = interaction.message; // keep the one reference pointing at the live message
   } catch (err) {
     if (!isGone(err)) throw err;
     player.panel = null;
-    await interaction
-      .reply({
-        content: '⌛ This panel expired. Run `/symus` for a fresh one.',
-        flags: MessageFlags.Ephemeral,
-      })
-      .catch(() => {});
+    syncPanel(player); // repost, since the old panel is unreachable
   }
 }

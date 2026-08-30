@@ -1,3 +1,4 @@
+import { syncPanel } from './panel.js';
 import { GuildPlayer } from './player.js';
 
 /** guildId -> GuildPlayer. One player per guild, created on demand. */
@@ -8,6 +9,9 @@ export function getPlayer(interaction) {
   if (!player) {
     player = new GuildPlayer(interaction.guild, interaction.channel);
     player.onDestroy = () => players.delete(interaction.guildId);
+    // The player owns playback and knows nothing about Discord messages; this is
+    // the seam where a track change becomes a panel edit.
+    player.onPanelSync = () => syncPanel(player);
     players.set(interaction.guildId, player);
   }
   player.text = interaction.channel; // announce where the user is talking now

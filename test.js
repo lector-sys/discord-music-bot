@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import {
+  BAR_WIDTH,
   HISTORY_CAP,
+  bestThumbnail,
   clampVolume,
   cleanError,
   fmt,
   kindOf,
+  loopEmoji,
   nextLoop,
   normalize,
   pickResult,
   planPrevious,
+  progressBar,
   pushHistory,
 } from './src/player.js';
 
@@ -113,5 +117,32 @@ assert.equal(past.length, 1);
 const restart = planPrevious([], now);
 assert.equal(restart.track, now);
 assert.equal(restart.requeue, null);
+
+// Progress bar: fixed width, head at the left on 0% and the right on 100%.
+assert.equal(progressBar(0, 100), `●${'─'.repeat(BAR_WIDTH - 1)}`);
+assert.equal(progressBar(50, 100), `${'━'.repeat(8)}●${'─'.repeat(7)}`);
+assert.equal(progressBar(100, 100), `${'━'.repeat(BAR_WIDTH - 1)}●`);
+// A livestream has no total to fill, so the head stays parked rather than dividing by zero.
+assert.equal(progressBar(500, 0), `●${'─'.repeat(BAR_WIDTH - 1)}`);
+// Width holds whatever you throw at it, including out-of-range input.
+for (const [e, t] of [[0, 0], [10, 100], [999, 100], [-5, 100], [1, 3]]) {
+  assert.equal([...progressBar(e, t)].length, BAR_WIDTH, `width for ${e}/${t}`);
+}
+
+// Loop emoji tracks the mode, and anything unexpected falls back to 'off'.
+assert.equal(loopEmoji('off'), '➡️');
+assert.equal(loopEmoji('track'), '🔂');
+assert.equal(loopEmoji('queue'), '🔁');
+assert.equal(loopEmoji(undefined), loopEmoji('off'));
+assert.notEqual(loopEmoji('track'), loopEmoji('queue'));
+
+// Artwork: prefer the widest thumbnail yt-dlp gave us, else derive one from the id.
+assert.equal(
+  bestThumbnail({ thumbnails: [{ url: 'small', width: 360 }, { url: 'big', width: 720 }] }),
+  'big',
+);
+assert.equal(bestThumbnail({ id: 'abc123' }), 'https://i.ytimg.com/vi/abc123/hqdefault.jpg');
+assert.equal(bestThumbnail({}), null);
+assert.equal(bestThumbnail(null), null);
 
 console.log('ok');

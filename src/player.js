@@ -30,6 +30,22 @@ export const LOOP_MODES = ['off', 'track', 'queue'];
 export const nextLoop = (mode) => LOOP_MODES[(LOOP_MODES.indexOf(mode) + 1) % LOOP_MODES.length];
 
 export const HISTORY_CAP = 50;
+export const PANEL_TICK_MS = 10_000; // per-second edits would hit Discord's rate limit
+export const BAR_WIDTH = 16;
+
+export const LOOP_EMOJI = { off: '➡️', track: '🔂', queue: '🔁' };
+export const loopEmoji = (mode) => LOOP_EMOJI[mode] ?? LOOP_EMOJI.off;
+
+/** Highest-resolution thumbnail, resolved lazily at render time from data we already hold. */
+export function bestThumbnail(track) {
+  const list = track?.thumbnails;
+  if (Array.isArray(list) && list.length) {
+    const best = list.reduce((a, b) => ((b?.width ?? 0) > (a?.width ?? 0) ? b : a));
+    if (best?.url) return best.url;
+  }
+  // hqdefault is the one size YouTube always has; maxresdefault 404s on plenty of videos.
+  return track?.id ? `https://i.ytimg.com/vi/${track.id}/hqdefault.jpg` : null;
+}
 
 /** Push a finished track, evicting the oldest past the cap. Mutates and returns the stack. */
 export function pushHistory(history, track, cap = HISTORY_CAP) {
@@ -49,11 +65,14 @@ export function planPrevious(history, current) {
   return prev ? { track: prev, requeue: current } : { track: current, requeue: null };
 }
 
-/** Text progress bar. Zero-duration means a livestream, which has nothing to fill. */
-export function progressBar(elapsed, total, width = 18) {
-  if (!(total > 0)) return '🔴 LIVE';
-  const at = Math.min(width - 1, Math.floor((Math.min(elapsed, total) / total) * width));
-  return `${'▬'.repeat(at)}🔘${'▬'.repeat(width - 1 - at)}`;
+/**
+ * Playhead bar: filled track, marker, remaining track. Always exactly `width`
+ * characters. A zero total (livestream) has nothing to fill, so the head sits at 0.
+ */
+export function progressBar(elapsed, total, width = BAR_WIDTH) {
+  const ratio = total > 0 ? Math.min(1, Math.max(0, elapsed / total)) : 0;
+  const at = Math.round(ratio * (width - 1));
+  return `${'━'.repeat(at)}●${'─'.repeat(width - 1 - at)}`;
 }
 
 /** Tidy up what people actually paste: whitespace, Discord's <...>, missing scheme. */
@@ -151,10 +170,12 @@ function runYtdlp(args, timeoutMs = 60_000) {
 }
 
 const toTrack = (e) => ({
+  id: e.id ?? null,
   title: e.title ?? 'Unknown title',
   url: e.webpage_url ?? e.url,
   duration: e.duration ?? 0,
   channel: e.channel ?? e.uploader ?? null,
+  thumbnails: e.thumbnails ?? null,
 });
 
 /** URL or search terms -> { name, tracks, searched }. Throws user-facing messages. */
@@ -215,7 +236,10 @@ export class GuildPlayer {
     this.volume = 100;
     this.muted = false;
     this.loop = 'off';
-    this.panel = null; // Message holding the /symus control panel, if one is open
+    this.panel = null; // the guild's one and only panel Message, for the whole session
+    this.panelTimer = null; // ticks the progress bar while playing
+    this.panelLock = Promise.resolve(); // serializes panel edits so ticks cannot interleave
+    this.onPanelSync = () => {}; // wired up in queue.js; no-op for tests and verify.mjs
     this.resource = null; // live resource, so volume changes land mid-track
 
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
@@ -327,6 +351,7 @@ export class GuildPlayer {
 
     this.current = this.queue.shift() ?? null;
     if (!this.current) {
+      this.#stopProgress();
       this.scheduleLeave();
       return;
     }
@@ -345,6 +370,8 @@ export class GuildPlayer {
     });
     this.#applyVolume();
     this.player.play(this.resource);
+    this.#startProgress();
+    this.onPanelSync();
     this.say(`▶️ Now playing **${this.current.title}** \`${fmt(this.current.duration)}\``);
   }
 
@@ -394,12 +421,29 @@ export class GuildPlayer {
     this.player.stop(true); // Idle fires -> #next
   }
 
+  #startProgress() {
+    this.#stopProgress();
+    this.panelTimer = setInterval(() => this.onPanelSync(), PANEL_TICK_MS);
+    this.panelTimer.unref?.(); // never hold the process open just to redraw a bar
+  }
+
+  #stopProgress() {
+    clearInterval(this.panelTimer);
+    this.panelTimer = null;
+  }
+
   pause() {
-    return this.player.pause();
+    const ok = this.player.pause();
+    this.#stopProgress(); // a frozen playhead needs no ticking
+    this.onPanelSync();
+    return ok;
   }
 
   resume() {
-    return this.player.unpause();
+    const ok = this.player.unpause();
+    this.#startProgress();
+    this.onPanelSync();
+    return ok;
   }
 
   scheduleLeave() {
@@ -435,8 +479,10 @@ export class GuildPlayer {
     this.queue = [];
     this.current = null;
     this.history = [];
-    this.panel = null;
     this.resource = null;
+    this.#stopProgress();
+    this.panel?.delete().catch(() => {}); // the panel dies with the session
+    this.panel = null;
     this.player.stop(true);
     try {
       this.connection?.destroy();

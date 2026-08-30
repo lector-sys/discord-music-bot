@@ -1,5 +1,5 @@
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { buildPanel, retirePanel } from './panel.js';
+import { syncPanel } from './panel.js';
 import { fmt, resolve } from './player.js';
 import { activePlayer, getPlayer } from './queue.js';
 
@@ -58,9 +58,16 @@ export const commands = [
       .setDescription('Open the SYmuS playback controls.'),
     async execute(interaction) {
       const player = activePlayer(interaction); // throws if nothing is playing
-      await retirePanel(player); // grey out the last panel so two cannot fight
-      await interaction.reply(buildPanel(player)); // public: anyone in voice can drive it
-      player.panel = await interaction.fetchReply();
+      // Exactly one panel per guild. If it is already up, point at it instead of
+      // posting a rival that would fight over the same state.
+      if (player.panel) {
+        return ephemeral(interaction, `🎵 The panel is already up: ${player.panel.url}`);
+      }
+      await syncPanel(player);
+      return ephemeral(
+        interaction,
+        player.panel ? `🎵 Panel posted: ${player.panel.url}` : '❌ I cannot post the panel here.',
+      );
     },
   },
 

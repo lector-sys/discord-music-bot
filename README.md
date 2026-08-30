@@ -8,12 +8,16 @@ Streams audio directly, never downloads files.
 | Command | What it does |
 |---|---|
 | `/play <query>` | Joins your voice channel and queues a YouTube video, every video in a playlist, or the best match for search terms |
-| `/symus` | Interactive control panel: prev/pause/next/loop/stop, volume and mute |
+| `/symus` | Jump to the guild’s control panel, or post it if none is up |
 | `/skip` | Skip the current track |
 | `/pause` / `/resume` | Pause and resume |
 | `/stop` | Clear the queue and leave |
 | `/queue` | Current track plus the next 10 queued |
 | `/nowplaying` | Current track with elapsed / total time |
+
+A single YouTube Music-styled panel is posted per guild the first time playback
+starts, then edited in place for every track and refreshed every 10 seconds. It is
+deleted when the session ends. `/symus` links to it rather than posting a rival.
 
 The bot leaves on its own after `IDLE_TIMEOUT_MS` (default 5 minutes) of an empty
 queue **or** an empty voice channel.
@@ -125,7 +129,7 @@ actually advances, which separates "voice handshake failed" from "audio stream d
 ```
 index.js          client, intents, slash-command registration, error handling
 src/commands.js   the eight slash commands
-src/panel.js      /symus control panel: embed, buttons, button routing
+src/panel.js      the one-per-guild control panel: embed, buttons, button routing
 src/queue.js      guild -> player registry (the queue manager)
 src/player.js     URL normalizing/resolving, yt-dlp streaming, playback, idle timeout
 test.js           self-check for URL parsing and yt-dlp error mapping
