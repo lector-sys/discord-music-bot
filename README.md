@@ -8,6 +8,7 @@ Streams audio directly, never downloads files.
 | Command | What it does |
 |---|---|
 | `/play <query>` | Joins your voice channel and queues a YouTube video, every video in a playlist, or the best match for search terms |
+| `/symus` | Interactive control panel: prev/pause/next/loop/stop, volume and mute |
 | `/skip` | Skip the current track |
 | `/pause` / `/resume` | Pause and resume |
 | `/stop` | Clear the queue and leave |
@@ -20,10 +21,16 @@ queue **or** an empty voice channel.
 ## Requirements
 
 - Node.js **22+** (the `--env-file` flag is used instead of a `dotenv` dependency)
-- No compiler and no ffmpeg needed. `yt-dlp` hands back Opus-in-WebM, which
-  `@discordjs/voice` demuxes and forwards untranscoded, so the pure-JS `opusscript`
-  never actually has to encode anything. If you later add an ffmpeg/PCM source,
-  `npm i @discordjs/opus` (needs C++ build tools) and it is preferred automatically.
+- No ffmpeg needed. `yt-dlp` hands back Opus-in-WebM and `@discordjs/voice` demuxes
+  it directly.
+- **Opus passthrough is deliberately given up.** The `/symus` volume control needs
+  `inlineVolume`, and scaling audio means decoding Opus to PCM, applying the gain,
+  and re-encoding — untranscoded frames cannot be made quieter. `@discordjs/opus`
+  (native) is what keeps that re-encode cheap; `opusscript` stays installed as a
+  pure-JS fallback and `@discordjs/voice` picks the native binding automatically
+  when it loads. Check which one is live with `npm run verify`.
+  Drop `inlineVolume` in `src/player.js` to get passthrough back, at the cost of
+  the volume and mute buttons.
 - The `yt-dlp` binary is fetched by `youtube-dl-exec`'s postinstall. If your npm
   blocks install scripts, run `npm approve-scripts youtube-dl-exec`, then `npm rebuild`.
 
@@ -111,7 +118,8 @@ actually advances, which separates "voice handshake failed" from "audio stream d
 
 ```
 index.js          client, intents, slash-command registration, error handling
-src/commands.js   the seven slash commands
+src/commands.js   the eight slash commands
+src/panel.js      /symus control panel: embed, buttons, button routing
 src/queue.js      guild -> player registry (the queue manager)
 src/player.js     URL normalizing/resolving, yt-dlp streaming, playback, idle timeout
 test.js           self-check for URL parsing and yt-dlp error mapping

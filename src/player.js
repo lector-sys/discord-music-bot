@@ -22,6 +22,39 @@ const AUDIO_FORMAT = 'bestaudio[acodec=opus][ext=webm]/bestaudio[ext=webm]';
 export const fmt = (sec) =>
   `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
+export const clampVolume = (v) => Math.min(100, Math.max(0, Math.round(v)));
+
+export const LOOP_MODES = ['off', 'track', 'queue'];
+/** off -> track -> queue -> off. An unknown mode lands on 'off'. */
+export const nextLoop = (mode) => LOOP_MODES[(LOOP_MODES.indexOf(mode) + 1) % LOOP_MODES.length];
+
+export const HISTORY_CAP = 50;
+
+/** Push a finished track, evicting the oldest past the cap. Mutates and returns the stack. */
+export function pushHistory(history, track, cap = HISTORY_CAP) {
+  if (!track) return history;
+  history.push(track);
+  if (history.length > cap) history.splice(0, history.length - cap);
+  return history;
+}
+
+/**
+ * What Previous does: pop the last track and send the playing one back to the
+ * front of the queue. With no history, every media player restarts the current
+ * track from 0:00 rather than doing nothing — so do that.
+ */
+export function planPrevious(history, current) {
+  const prev = history.pop();
+  return prev ? { track: prev, requeue: current } : { track: current, requeue: null };
+}
+
+/** Text progress bar. Zero-duration means a livestream, which has nothing to fill. */
+export function progressBar(elapsed, total, width = 18) {
+  if (!(total > 0)) return '🔴 LIVE';
+  const at = Math.min(width - 1, Math.floor((Math.min(elapsed, total) / total) * width));
+  return `${'▬'.repeat(at)}🔘${'▬'.repeat(width - 1 - at)}`;
+}
+
 /** Tidy up what people actually paste: whitespace, Discord's <...>, missing scheme. */
 export function normalize(input) {
   const s = String(input ?? '')
@@ -177,6 +210,12 @@ export class GuildPlayer {
     this.child = null;
     this.timer = null;
     this.dead = false;
+    this.history = [];
+    this.volume = 100;
+    this.muted = false;
+    this.loop = 'off';
+    this.panel = null; // Message holding the /symus control panel, if one is open
+    this.resource = null; // live resource, so volume changes land mid-track
 
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
     this.player.on('stateChange', (from, to) =>
@@ -274,15 +313,72 @@ export class GuildPlayer {
     this.cancelLeave();
     this.#killChild();
 
+    // Whatever just ended: remember it for Previous, and requeue it if looping.
+    // Loop 'track' skips history — one song on repeat would evict everything else.
+    const finished = this.current;
+    if (finished) {
+      if (this.loop === 'track') this.queue.unshift(finished);
+      else {
+        pushHistory(this.history, finished);
+        if (this.loop === 'queue') this.queue.push(finished);
+      }
+    }
+
     this.current = this.queue.shift() ?? null;
     if (!this.current) {
       this.scheduleLeave();
       return;
     }
-    this.player.play(
-      createAudioResource(this.#audioStream(this.current), { inputType: StreamType.WebmOpus }),
-    );
+    // inlineVolume gives up Opus passthrough: voice decodes to PCM, scales it, re-encodes.
+    // @discordjs/opus (native) is what keeps that re-encode cheap.
+    this.resource = createAudioResource(this.#audioStream(this.current), {
+      inputType: StreamType.WebmOpus,
+      inlineVolume: true,
+    });
+    this.#applyVolume();
+    this.player.play(this.resource);
     this.say(`▶️ Now playing **${this.current.title}** \`${fmt(this.current.duration)}\``);
+  }
+
+  #applyVolume() {
+    this.resource?.volume?.setVolume(this.muted ? 0 : this.volume / 100);
+  }
+
+  get paused() {
+    return (
+      this.player.state.status === AudioPlayerStatus.Paused ||
+      this.player.state.status === AudioPlayerStatus.AutoPaused
+    );
+  }
+
+  /** Clamped 0-100, and kept for the rest of the session rather than per track. */
+  setVolume(level) {
+    this.volume = clampVolume(level);
+    this.muted = false; // touching the volume unmutes, or the panel would lie
+    this.#applyVolume();
+    return this.volume;
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    this.#applyVolume();
+    return this.muted;
+  }
+
+  cycleLoop() {
+    this.loop = nextLoop(this.loop);
+    return this.loop;
+  }
+
+  /** Back one track, or restart the current one when there is no history. */
+  previous() {
+    const { track, requeue } = planPrevious(this.history, this.current);
+    if (!track) return false;
+    if (requeue) this.queue.unshift(requeue);
+    this.queue.unshift(track);
+    this.current = null; // handled above; stops #next recording it a second time
+    this.skip();
+    return true;
   }
 
   skip() {
@@ -330,6 +426,9 @@ export class GuildPlayer {
     this.#killChild();
     this.queue = [];
     this.current = null;
+    this.history = [];
+    this.panel = null;
+    this.resource = null;
     this.player.stop(true);
     try {
       this.connection?.destroy();

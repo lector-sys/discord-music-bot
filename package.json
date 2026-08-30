@@ -12,6 +12,7 @@
     "verify": "node --env-file=.env verify.mjs"
   },
   "dependencies": {
+    "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.19.2",
     "discord.js": "^14.22.1",
     "libsodium-wrappers": "^0.7.15",

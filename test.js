@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
-import { cleanError, fmt, kindOf, normalize, pickResult } from './src/player.js';
+import {
+  HISTORY_CAP,
+  clampVolume,
+  cleanError,
+  fmt,
+  kindOf,
+  nextLoop,
+  normalize,
+  pickResult,
+  planPrevious,
+  pushHistory,
+} from './src/player.js';
 
 // normalize() only rescues scheme-less YouTube links; anything it rejects goes to
 // kindOf() raw, which classifies it as a search term.
@@ -68,5 +79,39 @@ assert.equal(
 assert.equal(cleanError('ERROR: [youtube] abc12345678: Private video'), 'private');
 assert.equal(cleanError('ERROR: [youtube] abc12345678: Video unavailable'), 'unavailable');
 assert.equal(cleanError('WARNING: something noisy'), 'could not be fetched');
+
+// Volume clamps at both ends; the panel steps by 10 and must not run past the bounds.
+assert.equal(clampVolume(50), 50);
+assert.equal(clampVolume(0 - 10), 0);
+assert.equal(clampVolume(100 + 10), 100);
+assert.equal(clampVolume(-999), 0);
+assert.equal(clampVolume(999), 100);
+
+// Loop cycles off -> track -> queue and wraps; anything unexpected lands on off.
+assert.equal(nextLoop('off'), 'track');
+assert.equal(nextLoop('track'), 'queue');
+assert.equal(nextLoop('queue'), 'off');
+assert.equal(nextLoop(undefined), 'off');
+
+// History is bounded: the oldest entries fall off, the newest survive.
+const h = [];
+for (let i = 0; i < HISTORY_CAP + 5; i++) pushHistory(h, { title: `t${i}` });
+assert.equal(h.length, HISTORY_CAP);
+assert.equal(h[0].title, 't5'); // t0..t4 evicted
+assert.equal(h.at(-1).title, `t${HISTORY_CAP + 4}`);
+assert.equal(pushHistory([], null).length, 0); // nothing playing, nothing to record
+
+// Previous with history: play the popped track, send the current one back to the queue.
+const past = [{ title: 'a' }, { title: 'b' }];
+const now = { title: 'c' };
+const back = planPrevious(past, now);
+assert.equal(back.track.title, 'b');
+assert.equal(back.requeue, now);
+assert.equal(past.length, 1);
+
+// Previous with no history restarts the current track instead of doing nothing.
+const restart = planPrevious([], now);
+assert.equal(restart.track, now);
+assert.equal(restart.requeue, null);
 
 console.log('ok');

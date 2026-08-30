@@ -1,4 +1,5 @@
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { buildPanel, retirePanel } from './panel.js';
 import { fmt, resolve } from './player.js';
 import { activePlayer, getPlayer } from './queue.js';
 
@@ -46,6 +47,20 @@ export const commands = [
             ? `✅ Queued **${track.title}**${detail}.`
             : `➕ Added **${track.title}**${detail} to the queue (position ${player.queue.length}).`,
       );
+    },
+  },
+
+  {
+    // Lowercase because Discord rejects mixed-case command names; the bot's
+    // display name SYmuS is unaffected.
+    data: new SlashCommandBuilder()
+      .setName('symus')
+      .setDescription('Open the SYmuS playback controls.'),
+    async execute(interaction) {
+      const player = activePlayer(interaction); // throws if nothing is playing
+      await retirePanel(player); // grey out the last panel so two cannot fight
+      await interaction.reply(buildPanel(player)); // public: anyone in voice can drive it
+      player.panel = await interaction.fetchReply();
     },
   },
 
