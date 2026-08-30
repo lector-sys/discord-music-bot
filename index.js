@@ -3,6 +3,12 @@ import { commands } from './src/commands.js';
 import { handleComponent } from './src/panel.js';
 import { players } from './src/queue.js';
 
+// Every diagnostic in this bot is a sequence question — which guild, how long apart.
+for (const level of ['log', 'error', 'warn']) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => original(new Date().toISOString().slice(11, 23), ...args);
+}
+
 if (!process.env.DISCORD_TOKEN) {
   console.error('DISCORD_TOKEN is missing. Copy .env.example to .env and fill it in.');
   process.exit(1);

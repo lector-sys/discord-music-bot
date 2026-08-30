@@ -237,6 +237,7 @@ export async function resolve(input) {
 export class GuildPlayer {
   constructor(guild, textChannel) {
     this.guild = guild;
+    this.tag = `[${guild.name}]`; // two guilds share one log file
     this.text = textChannel;
     this.queue = [];
     this.current = null;
@@ -257,7 +258,7 @@ export class GuildPlayer {
 
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
     this.player.on('stateChange', (from, to) =>
-      console.log(`[player] ${from.status} -> ${to.status}`),
+      console.log(`${this.tag} [player] ${from.status} -> ${to.status}`),
     );
     this.player.on(AudioPlayerStatus.Idle, () => {
       this.#next().catch((err) => console.error(err));
@@ -283,9 +284,9 @@ export class GuildPlayer {
       });
       this.connection.subscribe(this.player);
       this.connection.on('stateChange', (from, to) =>
-        console.log(`[voice] ${from.status} -> ${to.status}`),
+        console.log(`${this.tag} [voice] ${from.status} -> ${to.status}`),
       );
-      this.connection.on('error', (err) => console.error('[voice]', err));
+      this.connection.on('error', (err) => console.error(this.tag, '[voice]', err));
       this.#watchDisconnect();
     }
     // Audio pushed before the UDP handshake finishes is silently discarded.
@@ -375,7 +376,7 @@ export class GuildPlayer {
     // one available. Do not pass StreamType.WebmOpus here again.
     const webm = this.#audioStream(this.current);
     const opus = webm.pipe(new prism.opus.WebmDemuxer());
-    opus.on('error', (err) => console.error('[demux]', err.message));
+    opus.on('error', (err) => console.error(this.tag, '[demux]', this.current?.title, err.message));
 
     this.resource = createAudioResource(opus, {
       inputType: StreamType.Opus,
@@ -383,6 +384,7 @@ export class GuildPlayer {
     });
     this.#applyVolume();
     this.player.play(this.resource);
+    console.log(`${this.tag} [next] ${this.current.title} (${this.queue.length} queued)`);
     this.#startProgress();
     this.onPanelSync();
     this.say(`▶️ Now playing **${this.current.title}** \`${fmt(this.current.duration)}\``);
