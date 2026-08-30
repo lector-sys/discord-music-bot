@@ -9,6 +9,7 @@ import {
   entersState,
   joinVoiceChannel,
 } from '@discordjs/voice';
+import prism from 'prism-media';
 import ytdlExec from 'youtube-dl-exec';
 
 const YTDLP = ytdlExec.constants.YOUTUBE_DL_PATH;
@@ -329,10 +330,17 @@ export class GuildPlayer {
       this.scheduleLeave();
       return;
     }
-    // inlineVolume gives up Opus passthrough: voice decodes to PCM, scales it, re-encodes.
-    // @discordjs/opus (native) is what keeps that re-encode cheap.
-    this.resource = createAudioResource(this.#audioStream(this.current), {
-      inputType: StreamType.WebmOpus,
+    // Demux the WebM ourselves and hand voice plain Opus. Given WebmOpus it would
+    // route inlineVolume through FFmpeg (cost 4.0) instead of its own decoder (4.5)
+    // — and this project ships no FFmpeg, so that path throws. The Opus node has no
+    // FFmpeg edge at all, which makes the decode -> volume -> encode route the only
+    // one available. Do not pass StreamType.WebmOpus here again.
+    const webm = this.#audioStream(this.current);
+    const opus = webm.pipe(new prism.opus.WebmDemuxer());
+    opus.on('error', (err) => console.error('[demux]', err.message));
+
+    this.resource = createAudioResource(opus, {
+      inputType: StreamType.Opus,
       inlineVolume: true,
     });
     this.#applyVolume();

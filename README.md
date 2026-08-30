@@ -106,6 +106,12 @@ actually advances, which separates "voice handshake failed" from "audio stream d
 - **Playback broke after a YouTube change?** Update the extractor, not the code:
   delete `node_modules/youtube-dl-exec/bin` and `npm rebuild youtube-dl-exec`.
   yt-dlp ships fixes within days.
+- **"FFmpeg/avconv not found" after touching the audio pipeline?** Volume needs
+  PCM, and `@discordjs/voice` picks the cheapest route to it — from `WebmOpus`
+  that is FFmpeg (cost 4.0) rather than its own decoder (4.5). `src/player.js`
+  therefore demuxes the WebM itself and passes `StreamType.Opus`, whose graph node
+  has no FFmpeg edge at all. Passing `StreamType.WebmOpus` with `inlineVolume`
+  brings the crash straight back.
 - **"Now playing" but silence?** Almost always `@discordjs/voice` being too old.
   Discord now requires the DAVE end-to-end encryption handshake; anything before
   **0.19.0** connects its websocket, never completes the voice session, and fails
