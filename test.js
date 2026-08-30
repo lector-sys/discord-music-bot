@@ -11,6 +11,7 @@ import {
   nextLoop,
   normalize,
   pickResult,
+  planJump,
   planPrevious,
   progressBar,
   pushHistory,
@@ -144,5 +145,31 @@ assert.equal(
 assert.equal(bestThumbnail({ id: 'abc123' }), 'https://i.ytimg.com/vi/abc123/hqdefault.jpg');
 assert.equal(bestThumbnail({}), null);
 assert.equal(bestThumbnail(null), null);
+
+// Jumping to queue[2]: the playing track goes back first, then the tracks jumped
+// over, so Previous walks back through them in the order they were listed.
+const jHist = [{ t: 'old' }];
+const jQueue = [{ t: 'b' }, { t: 'c' }, { t: 'target' }, { t: 'e' }];
+const playing = { t: 'a' };
+assert.equal(planJump(jHist, jQueue, playing, 2), true);
+assert.deepEqual(jHist.map((x) => x.t), ['old', 'a', 'b', 'c']);
+assert.deepEqual(jQueue.map((x) => x.t), ['target', 'e']); // target is now next up
+
+// Index 0 is "play the very next track": nothing is jumped over, only the current
+// track goes back.
+const zHist = [];
+const zQueue = [{ t: 'next' }, { t: 'after' }];
+assert.equal(planJump(zHist, zQueue, { t: 'now' }, 0), true);
+assert.deepEqual(zHist.map((x) => x.t), ['now']);
+assert.deepEqual(zQueue.map((x) => x.t), ['next', 'after']);
+
+// Out-of-range and junk indexes change nothing at all.
+for (const bad of [-1, 2, 99, 1.5, NaN, undefined, '1']) {
+  const h = [{ t: 'keep' }];
+  const q = [{ t: 'x' }, { t: 'y' }];
+  assert.equal(planJump(h, q, { t: 'now' }, bad), false, `index ${bad}`);
+  assert.equal(h.length, 1, `history untouched for ${bad}`);
+  assert.equal(q.length, 2, `queue untouched for ${bad}`);
+}
 
 console.log('ok');

@@ -18,6 +18,9 @@ Streams audio directly, never downloads files.
 A single YouTube Music-styled panel is posted per guild the first time playback
 starts, then edited in place for every track and refreshed every 10 seconds. It is
 deleted when the session ends. `/symus` links to it rather than posting a rival.
+The panel carries a dropdown of what is queued — picking a track jumps straight to
+it, consuming the tracks in between the way a music app's up-next list does, so
+Previous still walks back through them. Queues over 25 get page arrows.
 
 The bot leaves on its own after `IDLE_TIMEOUT_MS` (default 5 minutes) of an empty
 queue **or** an empty voice channel.

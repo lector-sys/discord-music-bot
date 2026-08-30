@@ -66,6 +66,18 @@ export function planPrevious(history, current) {
 }
 
 /**
+ * Jumping to queue[index]: what was playing goes back first, then everything
+ * jumped over, so Previous walks back through them in the order they appeared.
+ * Mutates history and queue; returns false for an index that is not there.
+ */
+export function planJump(history, queue, current, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= queue.length) return false;
+  pushHistory(history, current);
+  for (const skipped of queue.splice(0, index)) pushHistory(history, skipped);
+  return true;
+}
+
+/**
  * Playhead bar: filled track, marker, remaining track. Always exactly `width`
  * characters. A zero total (livestream) has nothing to fill, so the head sits at 0.
  */
@@ -239,6 +251,7 @@ export class GuildPlayer {
     this.panel = null; // the guild's one and only panel Message, for the whole session
     this.panelTimer = null; // ticks the progress bar while playing
     this.panelLock = Promise.resolve(); // serializes panel edits so ticks cannot interleave
+    this.panelPage = 0; // which 25-track window of the queue the dropdown shows
     this.onPanelSync = () => {}; // wired up in queue.js; no-op for tests and verify.mjs
     this.resource = null; // live resource, so volume changes land mid-track
 
@@ -405,6 +418,15 @@ export class GuildPlayer {
     return this.loop;
   }
 
+  /** Jump straight to a queued track, consuming everything in between. */
+  jumpTo(index) {
+    if (!planJump(this.history, this.queue, this.current, index)) return false;
+    this.panelPage = 0; // the queue just shrank; page 1 is where the user is looking
+    this.current = null; // handled by planJump; stops #next recording it twice
+    this.skip();
+    return true;
+  }
+
   /** Back one track, or restart the current one when there is no history. */
   previous() {
     const { track, requeue } = planPrevious(this.history, this.current);
@@ -481,6 +503,7 @@ export class GuildPlayer {
     this.history = [];
     this.resource = null;
     this.#stopProgress();
+    this.panelPage = 0;
     this.panel?.delete().catch(() => {}); // the panel dies with the session
     this.panel = null;
     this.player.stop(true);

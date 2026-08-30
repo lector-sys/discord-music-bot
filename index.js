@@ -1,6 +1,6 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
 import { commands } from './src/commands.js';
-import { handleButton } from './src/panel.js';
+import { handleComponent } from './src/panel.js';
 import { players } from './src/queue.js';
 
 if (!process.env.DISCORD_TOKEN) {
@@ -24,7 +24,9 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   // Panel buttons are routed here rather than through a component collector,
   // which would die on restart and leave every posted panel inert.
-  const isPanelButton = interaction.isButton() && interaction.customId.startsWith('symus:');
+  const isPanelButton =
+    (interaction.isButton() || interaction.isStringSelectMenu()) &&
+    interaction.customId.startsWith('symus:');
   if (!isPanelButton && !interaction.isChatInputCommand()) return;
 
   const command = isPanelButton
@@ -33,7 +35,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (!isPanelButton && !command) return;
 
   try {
-    await (isPanelButton ? handleButton(interaction) : command.execute(interaction));
+    await (isPanelButton ? handleComponent(interaction) : command.execute(interaction));
   } catch (err) {
     console.error(err);
     const body = {

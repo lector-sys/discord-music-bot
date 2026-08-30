@@ -5,6 +5,7 @@ import {
   EmbedBuilder,
   MessageFlags,
   PermissionFlagsBits,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 import { bestThumbnail, fmt, loopEmoji, progressBar } from './player.js';
 import { players } from './queue.js';
@@ -15,6 +16,7 @@ const YT_DARK = 0x212121;
 const ACCENT = YT_RED;
 
 export const VOLUME_STEP = 10;
+export const PAGE_SIZE = 25; // Discord's hard cap on select-menu options
 
 /** Panel edits die once the message is deleted or the token ages out. */
 const GONE = new Set([
@@ -23,6 +25,9 @@ const GONE = new Set([
   50027, // Invalid Webhook Token — the 15-minute expiry
 ]);
 const isGone = (err) => GONE.has(err?.code);
+
+// Discord rejects labels and descriptions over 100 characters.
+const cut = (text, n = 100) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 
 const icon = (id, emoji, style = ButtonStyle.Secondary) =>
   new ButtonBuilder().setCustomId(id).setEmoji(emoji).setStyle(style);
@@ -67,23 +72,62 @@ export function buildPanel(player) {
 
   // Ordered like a transport bar, not grouped by function. Everything neutral
   // except Stop, so the strip reads as dark controls rather than a traffic light.
-  return {
-    embeds: [embed],
-    components: [
+  const rows = [
+    new ActionRowBuilder().addComponents(
+      icon('symus:prev', '⏮️'),
+      icon('symus:playpause', player.paused ? '▶️' : '⏸️'),
+      icon('symus:next', '⏭️'),
+      icon('symus:loop', loopEmoji(player.loop)),
+      icon('symus:stop', '⏹️', ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder().addComponents(
+      icon('symus:vol:down', '🔉'),
+      icon('symus:mute', player.muted ? '🔈' : '🔇'),
+      icon('symus:vol:up', '🔊'),
+    ),
+  ];
+
+  // A select menu with zero options is rejected outright, so an empty queue gets no row.
+  const pages = queuePages(player);
+  if (pages.slice.length) {
+    rows.push(
       new ActionRowBuilder().addComponents(
-        icon('symus:prev', '⏮️'),
-        icon('symus:playpause', player.paused ? '▶️' : '⏸️'),
-        icon('symus:next', '⏭️'),
-        icon('symus:loop', loopEmoji(player.loop)),
-        icon('symus:stop', '⏹️', ButtonStyle.Danger),
+        new StringSelectMenuBuilder()
+          .setCustomId('symus:jump')
+          .setPlaceholder(
+            pages.count > 1
+              ? `Up next — ${player.queue.length} tracks (page ${pages.page + 1}/${pages.count})`
+              : `Up next — ${player.queue.length} track(s)`,
+          )
+          .addOptions(
+            pages.slice.map((t, i) => ({
+              label: cut(t.title ?? 'Unknown title'),
+              description: cut([t.channel, fmt(t.duration)].filter(Boolean).join(' · ')) || undefined,
+              value: String(pages.start + i),
+              emoji: '🎵',
+            })),
+          ),
       ),
-      new ActionRowBuilder().addComponents(
-        icon('symus:vol:down', '🔉'),
-        icon('symus:mute', player.muted ? '🔈' : '🔇'),
-        icon('symus:vol:up', '🔊'),
-      ),
-    ],
-  };
+    );
+    if (pages.count > 1) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          icon('symus:page:prev', '◀️').setDisabled(pages.page === 0),
+          icon('symus:page:next', '▶️').setDisabled(pages.page >= pages.count - 1),
+        ),
+      );
+    }
+  }
+
+  return { embeds: [embed], components: rows };
+}
+
+/** Which 25-track window of the queue the dropdown is showing. */
+export function queuePages(player) {
+  const count = Math.max(1, Math.ceil(player.queue.length / PAGE_SIZE));
+  const page = Math.min(Math.max(player.panelPage ?? 0, 0), count - 1);
+  const start = page * PAGE_SIZE;
+  return { page, count, start, slice: player.queue.slice(start, start + PAGE_SIZE) };
 }
 
 const canPost = (channel, client) => {
@@ -128,8 +172,8 @@ async function render(player) {
   player.panel = await channel.send(payload);
 }
 
-/** Handles every symus:* button, then re-renders so the panel shows real state. */
-export async function handleButton(interaction) {
+/** Handles every symus:* component, then re-renders so the panel shows real state. */
+export async function handleComponent(interaction) {
   const player = players.get(interaction.guildId);
   if (!player?.current) {
     return interaction
@@ -165,6 +209,17 @@ export async function handleButton(interaction) {
       break;
     case 'symus:mute':
       player.toggleMute();
+      break;
+    // Jumping consumes everything in between, the way clicking down a
+    // YouTube Music queue does — the passed tracks land in history.
+    case 'symus:jump':
+      player.jumpTo(Number(interaction.values?.[0]));
+      break;
+    case 'symus:page:prev':
+      player.panelPage = Math.max(0, (player.panelPage ?? 0) - 1);
+      break;
+    case 'symus:page:next':
+      player.panelPage = Math.min(queuePages(player).count - 1, (player.panelPage ?? 0) + 1);
       break;
     default:
       return;
