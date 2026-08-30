@@ -55,12 +55,12 @@ queue **or** an empty voice channel.
 **OAuth2 → URL Generator**:
 
 - Scopes: `bot`, `applications.commands`
-- Bot permissions: `View Channel`, `Send Messages`, `Connect`, `Speak`
+- Bot permissions: `View Channel`, `Send Messages`, `Embed Links`, `Connect`, `Speak`
 
-Or use this URL directly (same permissions, bitfield `3148800`), swapping in your ID:
+Or use this URL directly (same permissions, bitfield `3165184`), swapping in your ID:
 
 ```
-https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=3148800&scope=bot%20applications.commands
+https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=3165184&scope=bot%20applications.commands
 ```
 
 The bot also prints this link on startup.
@@ -124,6 +124,11 @@ actually advances, which separates "voice handshake failed" from "audio stream d
   **0.19.0** connects its websocket, never completes the voice session, and fails
   without an error. Keep `@discordjs/voice` at `^0.19.2` or newer and make sure
   `@snazzah/davey` shows up in `generateDependencyReport()`.
+- **Audio plays but no panel appears?** The bot is missing **Embed Links** in that
+  text channel. `canPost()` skips rather than throwing, so there is no error in chat
+  or in the log — it just never posts. Invites made before this was fixed used
+  bitfield `3148800`, which omits it; re-invite with `3165184` or grant the
+  permission on the channel.
 - Audio is never pushed before the connection reaches `Ready` — packets sent
   earlier are silently discarded, which looks identical to "the bot is broken".
 

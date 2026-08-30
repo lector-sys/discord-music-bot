@@ -23,7 +23,7 @@ client.once(Events.ClientReady, async (c) => {
   const id = process.env.CLIENT_ID ?? c.user.id;
   console.log(`Ready as ${c.user.tag}`);
   console.log(
-    `Invite: https://discord.com/api/oauth2/authorize?client_id=${id}&permissions=3148800&scope=bot%20applications.commands`,
+    `Invite: https://discord.com/api/oauth2/authorize?client_id=${id}&permissions=3165184&scope=bot%20applications.commands`,
   );
 });
 
